@@ -1,6 +1,7 @@
 import express from "express";
 import bodyParser from "body-parser";
 import mongoose from "mongoose";
+import _ from "lodash";
 
 const app = express();
 app.set('view engine', 'ejs');
@@ -31,8 +32,16 @@ const item3 = new Item({
   name: "<-- hit this to delete an item "
 });
 
-
 const defaultItems = [item1, item2, item3];
+
+const listSchema = {
+  name: String,
+  items: [itemsSchema]
+};
+
+const List = mongoose.model("List", listSchema);
+
+
 
 app.get("/", async function(req, res) {
   try {
@@ -54,44 +63,98 @@ app.get("/", async function(req, res) {
   }
 });
 
-app.get("/", function(req, res) {
-  Item.find({}, function(err, foundItems) {
-    if(foundItems.length === 0) {
-      Item.insertMany(defaultItems, function(err) {
-        if(err) {
-          console.log(err);
-        }
-        else {
-          console.log("successfully saved default items to database");
-        }
-      });
-    }
-    else {
-      res.render("list", {listTitle: "Today", newListItems: foundItems});
-    }
+
+app.post("/", async function(req, res){
+  const itemName = req.body.newItem;
+  const listName = req.body.list;
+
+  const item = new Item({
+    name: itemName
   });
+
+  if (listName === "Today") {
+    await item.save();
+    res.redirect("/");
+  } 
+  else {
+    try {
+      const foundList = await List.findOne({ name: listName });
+      if (foundList) {
+        foundList.items.push(item);
+        await foundList.save();
+      }
+      res.redirect("/" + listName);
+    } catch (err) {
+      console.error(err);
+      // res.status(500).send("An error occurred while saving the item.");
+    }
+  }
 });
 
 
+app.post("/delete", async (req, res) => {
+  const checkedItemId = req.body.checkbox;
+  const listName = req.body.listName;
 
-app.post("/", function(req, res){
-  
-  const item = req.body.newItem;
-
-  if (req.body.list === "Work") {
-    workItems.push(item);
-    res.redirect("/work");
+  if (listName === "Today") {
+    try {
+      await Item.findByIdAndDelete(checkedItemId);
+      console.log("Successfully deleted the checked item from Today list");
+      res.redirect('/');
+    } 
+    catch (err) {
+      console.error("Error deleting item from Today list:", err);
+      // res.status(500).send("Internal Server Error");
+    }
   } 
   else {
-    items.push(item);
-    res.redirect("/");
+    try {
+      await List.findOneAndUpdate(
+        { name: listName },
+        { $pull: { items: { _id: checkedItemId } } }
+      );
+     
+      console.log(`Successfully deleted the checked item from ${listName} list`);
+      res.redirect("/" + listName);
+    } 
+    catch (err) {
+      console.error(`Error deleting item from ${listName} list:`, err);
+      // res.status(500).send("Internal Server Error");
+    }
   }
 
 });
 
-app.get("/work", function(req,res){
-  res.render("list", {listTitle: "Work List", newListItems: workItems});
+
+
+app.get("/:customListName", async (req, res) => {
+  const customListName = _.capitalize(req.params.customListName);
+
+  try {
+    const foundList = await List.findOne({ name: customListName });
+
+    if (!foundList) {
+      // Create a new list
+      const list = new List({
+        name: customListName,
+        items: defaultItems
+      });
+
+      await list.save();
+      res.redirect("/" + customListName);
+    } 
+    else { 
+      // Show the existing list
+      res.render("list.ejs", { listTitle: foundList.name, newListItems: foundList.items });
+    }
+  } 
+  catch (err) {
+    console.log(err);
+    res.status(500).send("Internal Server Error");
+  }
+  
 });
+
 
 app.get("/about", function(req, res){
   res.render("about");
